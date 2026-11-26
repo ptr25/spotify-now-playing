@@ -13,11 +13,18 @@ http.createServer(async (req, res) => {
     const tokenResponse = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({grant_type:'refresh_token', refresh_token:refreshToken, client_id:clientId}) });
     if (!tokenResponse.ok) throw new Error('Spotify authorization failed');
     const { access_token } = await tokenResponse.json();
-    const playing = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {headers:{Authorization:`Bearer ${access_token}`}});
-    if (playing.status === 204) return res.end(JSON.stringify({ status:'idle' }));
-    if (!playing.ok) throw new Error('Spotify playback request failed');
-    const data = await playing.json();
-    if (!data.is_playing || !data.item || data.currently_playing_type !== 'track') return res.end(JSON.stringify({status:'idle'}));
-    res.end(JSON.stringify({status:'playing', title:data.item.name, artist:data.item.artists.map(a=>a.name).join(', '), url:data.item.external_urls?.spotify || null}));
+    const headers = {Authorization:`Bearer ${access_token}`};
+    const playing = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {headers});
+    if (!playing.ok && playing.status !== 204) throw new Error('Spotify playback request failed');
+    const data = playing.status === 204 ? null : await playing.json();
+    let track = data?.currently_playing_type === 'track' ? data.item : null;
+    if (!track) {
+      const recent = await fetch('https://api.spotify.com/v1/me/player/recently-played?limit=1', {headers});
+      if (!recent.ok) throw new Error('Spotify recent playback request failed');
+      const history = await recent.json();
+      track = history.items?.[0]?.track;
+    }
+    if (!track) return res.end(JSON.stringify({status:'idle'}));
+    res.end(JSON.stringify({status:'playing', title:track.name, artist:track.artists.map(a=>a.name).join(', '), url:track.external_urls?.spotify || null}));
   } catch { res.writeHead(502); res.end(JSON.stringify({status:'unavailable'})); }
 }).listen(process.env.PORT || 10000, '0.0.0.0');
